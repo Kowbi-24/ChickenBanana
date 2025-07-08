@@ -1,43 +1,82 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import './ChickenBanana.css';
+import io from 'socket.io-client';
 
-const imageUrls = [
-  'https://thumbs.dreamstime.com/b/bunch-bananas-6175887.jpg?w=768',  // banana at index 0
-  'https://thumbs.dreamstime.com/z/full-body-brown-chicken-hen-standing-isolated-white-backgroun-background-use-farm-animals-livestock-theme-49741285.jpg?ct=jpeg', // chicken at index 1
-];
-
-// Helper to get a random image and its type
-function getRandomImage() {
-  const index = Math.floor(Math.random() * imageUrls.length);
-  return {
-    url: imageUrls[index],
-    type: index === 0 ? 'banana' : 'chicken',
-  };
-}
+// Connect to server
+const socket = io('http://172.18.0.223:3001');
 
 function ChickenBanana() {
   const [playerChoice, setPlayerChoice] = useState(null);
-  const [images] = useState(Array(36).fill().map(getRandomImage));
+  const [images, setImages] = useState([]);
   const [pressed, setPressed] = useState(Array(36).fill(false));
+  const [dialogMessage, setDialogMessage] = useState(null);
+  const [gameOver, setGameOver] = useState(false);  // Track if the game is over
+
+  // Listen for the other player's move
+  useEffect(() => {
+    // Load images
+    socket.on('gameStart', (data) => {
+      setImages(data.images);
+    });
+
+    socket.on('updateGame', (data) => {
+      setPressed((prev) => {
+        const newPressed = [...prev];
+        newPressed[data.index] = true;
+        return newPressed;
+      });
+      setDialogMessage(data.message);  // Show the message from the other player
+    });
+
+    return () => {
+      socket.off('updateGame');  // Clean up on component unmount
+    };
+  }, []);
 
   const handleClick = (index) => {
-    if (pressed[index]) return; // already pressed, ignore
+    // If this square has been pressed or the game is over, return early
+    if (pressed[index] || gameOver) return;
 
     const image = images[index];
+
+    // Check if player has selected a side
     if (!playerChoice) {
-      alert('Please select a side first!');
+      setDialogMessage('Please select a side first!');
       return;
     }
 
+    const isLoss = image.type !== playerChoice;
+
+    // Update pressed state to disable the square
     setPressed((prev) => {
       const newPressed = [...prev];
       newPressed[index] = true;
       return newPressed;
     });
 
-    if (image.type !== playerChoice) {
-      alert('YOU LOSE!')
+    // Send the player's move to the other player
+    const message = isLoss ? 'YOU LOSE!' : ''; // No message when the move is correct
+    socket.emit('playerMove', {
+      index,
+      message,
+      playerChoice,  // send the player's side for clarity
+    });
+
+    // Update the dialog message
+    if (isLoss) {
+      setDialogMessage('YOU LOSE!');
+      setGameOver(true);  // End the game if the player loses
+    } else {
+      setDialogMessage(null); // No dialog for correct move, continue game
     }
+  };
+
+  const restartGame = () => {
+    // Reset the game state
+    setPlayerChoice(null);
+    setPressed(Array(36).fill(false));
+    setDialogMessage(null);
+    setGameOver(false);  // Reset game over state
   };
 
   return (
@@ -45,9 +84,12 @@ function ChickenBanana() {
       <h1>Chicken Banana Game!</h1>
 
       <div className="chooseSide">
-        <button className='sideButton' onClick={() => setPlayerChoice('chicken')}>Chicken</button>
-        <button className='sideButton' onClick={() => setPlayerChoice('banana')}>Banana</button>
-        <p>Side: {playerChoice || 'None selected'}</p>
+        <div className='sideButtonContainer'>
+          <button className='sideButton' onClick={() => setPlayerChoice('chicken')}>Chicken</button>
+          <button className='sideButton' onClick={() => setPlayerChoice('banana')}>Banana</button>
+        </div>
+        
+        <p>Side: {playerChoice ? playerChoice.toUpperCase() : 'NONE SELECTED'}</p>
       </div>
 
       <div className="grid">
@@ -69,6 +111,25 @@ function ChickenBanana() {
             )}
           </button>
         ))}
+      </div>
+
+      {dialogMessage && (
+        <DialogBox
+          message={dialogMessage}
+          onClose={restartGame}
+        />
+      )}
+    </div>
+  );
+}
+
+// Updated DialogBox component (capitalized)
+function DialogBox({ message, onClose }) {
+  return (
+    <div className="dialog-box-overlay">
+      <div className="dialog-box">
+        <p>{message}</p>
+        <button onClick={onClose}>OK</button>
       </div>
     </div>
   );
